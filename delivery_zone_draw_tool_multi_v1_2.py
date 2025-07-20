@@ -1,4 +1,4 @@
-# Filename: delivery_zone_draw_tool_multi_v1_2.py
+# Filename: delivery_zone_draw_tool_multi_v1_3.py
 import streamlit as st
 from streamlit_folium import st_folium
 import folium
@@ -8,7 +8,7 @@ from shapely.geometry import Point, shape, mapping
 import json
 
 # App Version
-VERSION = "v1.2"
+VERSION = "v1.3"
 
 st.set_page_config(page_title=f"Delivery Planner {VERSION}", layout="wide")
 st.title(f"📦 Multi-Zone Delivery Planner ({VERSION})")
@@ -26,6 +26,7 @@ col1, col2 = st.columns([2, 1])
 
 with col1:
     m = folium.Map(location=[gdf["Latitude"].mean(), gdf["Longitude"].mean()], zoom_start=12)
+    # Draw saved zones
     for label, zone in st.session_state.zones.items():
         folium.GeoJson(
             mapping(zone["geometry"]),
@@ -37,6 +38,7 @@ with col1:
                 'weight': 2
             }
         ).add_to(m)
+    # Plot customer points
     for _, row in gdf.iterrows():
         folium.CircleMarker(
             location=(row["Latitude"], row["Longitude"]),
@@ -45,6 +47,7 @@ with col1:
             fill=True,
             fill_opacity=0.5
         ).add_to(m)
+    # Add drawing tools
     draw = folium.plugins.Draw(
         export=True,
         draw_options={"polyline": False, "polygon": True, "rectangle": True, "circle": False},
@@ -58,21 +61,32 @@ with col2:
     st.markdown("---")
     ie_col1, ie_col2 = st.columns(2)
     with ie_col1:
-        uploaded = st.file_uploader("Import Zones JSON", type=["json"])
+        uploaded = st.file_uploader("Import Zones (JSON or GeoJSON)", type=["json", "geojson"])
         if uploaded:
             try:
-                data = json.load(uploaded)
-                for label, info in data.items():
-                    geom = shape(info["geometry"])
-                    color = info.get("color", "red")
-                    inside = gdf[gdf.geometry.within(geom)].copy()
-                    st.session_state.zones[label] = {
-                        "geometry": geom,
-                        "data": inside,
-                        "count": len(inside),
-                        "color": color
-                    }
-                st.success(f"Imported {len(data)} zones.")
+                raw = uploaded.read()
+                text = raw.decode("utf-8")
+                data = json.loads(text)
+                # GeoJSON FeatureCollection
+                if isinstance(data, dict) and data.get("type") == "FeatureCollection":
+                    imported = 0
+                    for feat in data["features"]:
+                        geom = shape(feat.get("geometry", {}))
+                        props = feat.get("properties", {})
+                        label = props.get("name", f"Zone {len(st.session_state.zones) + 1}")
+                        color = props.get("color", "red")
+                        inside = gdf[gdf.geometry.within(geom)].copy()
+                        st.session_state.zones[label] = {"geometry": geom, "data": inside, "count": len(inside), "color": color}
+                        imported += 1
+                    st.success(f"Imported {imported} zones from GeoJSON.")
+                else:
+                    # legacy JSON export
+                    for label, info in data.items():
+                        geom = shape(info.get("geometry", {}))
+                        color = info.get("color", "red")
+                        inside = gdf[gdf.geometry.within(geom)].copy()
+                        st.session_state.zones[label] = {"geometry": geom, "data": inside, "count": len(inside), "color": color}
+                    st.success(f"Imported {len(data)} zones from JSON.")
             except Exception as e:
                 st.error(f"Failed to import zones: {e}")
     with ie_col2:
